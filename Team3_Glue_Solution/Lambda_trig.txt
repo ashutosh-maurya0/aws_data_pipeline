@@ -1,0 +1,30 @@
+import boto3
+
+def lambda_handler(event, context):
+    # Extract the bucket and key from the S3 event
+    bucket = event['Records'][0]['s3']['bucket']['name']
+    key = event['Records'][0]['s3']['object']['key']
+    
+    # Create a Glue client
+    glue_client = boto3.client('glue')
+    
+    # Specify the name of the Glue job to trigger
+    job_name = 'job - name---------------------------'
+    
+    # Specify the arguments for the Glue job
+    glue_arguments = {
+        '--s3_bucket': bucket,
+        '--s3_key': key
+        # Add any additional arguments here if needed
+    }
+    
+    # Trigger the Glue job
+    response = glue_client.start_job_run(JobName=job_name, Arguments=glue_arguments)
+    
+    # Print the response
+    print(response)
+    
+    return {
+        'statusCode': 200,
+        'body': 'Glue job triggered successfully'
+    }

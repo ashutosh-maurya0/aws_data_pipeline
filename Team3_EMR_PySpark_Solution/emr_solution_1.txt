@@ -1,0 +1,52 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import lit
+from pyspark.sql.types import StructType, StructField, IntegerType, StringType, DoubleType
+
+# Define the schema based on the dataset provided
+schema = StructType([
+    StructField("Id", IntegerType(), True),
+    StructField("EmployeeName", StringType(), True),
+    StructField("JobTitle", StringType(), True),
+    StructField("BasePay", DoubleType(), True),
+    StructField("OvertimePay", DoubleType(), True),
+    StructField("OtherPay", DoubleType(), True),
+    StructField("Benefits", DoubleType(), True),
+    StructField("TotalPay", DoubleType(), True),
+    StructField("TotalPayBenefits", DoubleType(), True),
+    StructField("Year", IntegerType(), True),
+    StructField("Notes", StringType(), True),
+    StructField("Agency", StringType(), True),
+    StructField("Status", StringType(), True)
+])
+
+def merge_datasets(input_path1, input_path2, output_path):
+    spark = SparkSession.builder.appName("Data Merging and Cleaning").getOrCreate()
+
+    # Read the CSV files using the schema
+    df1 = spark.read.csv(input_path1, schema=schema, header=True)
+    df2 = spark.read.csv(input_path2, schema=schema, header=True)
+
+    # Merge the datasets
+    merged_df = df1.unionByName(df2)
+
+    # Remove duplicate rows
+    deduped_df = merged_df.dropDuplicates()
+
+    # Order the data by the "Id" column
+    ordered_df = deduped_df.orderBy("Id")
+
+    # Write the ordered and deduplicated dataset to an output S3 bucket
+    ordered_df.coalesce(1).write.option("header", "true").csv(output_path)
+
+    spark.sparkContext.stop()
+
+if __name__ == "__main__":
+    import sys
+
+    # Accept command line arguments for input and output paths
+    input_path1 = sys.argv[1]  # Path to the first input CSV file
+    input_path2 = sys.argv[2]  # Path to the second input CSV file
+    output_path = sys.argv[3]  # Path for the output merged, ordered, and deduplicated CSV file
+
+    merge_datasets(input_path1, input_path2, output_path)
+

@@ -1,0 +1,57 @@
+from pyspark.sql import SparkSession
+import boto3
+
+def list_s3_files(bucket_name, prefix=''):
+    """List all files in an S3 bucket."""
+    s3_client = boto3.client('s3')
+    response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+    files = [content['Key'] for content in response.get('Contents', []) if '.' in content['Key']]
+    return files
+
+def is_header(df):
+    """Check if the DataFrame's first row can be considered a header."""
+    first_row = df.first()
+    return any(not str(cell).replace('.','',1).isdigit() for cell in first_row)
+
+def merge_datasets(output_path, src_bucket1, src_bucket2):
+    spark = SparkSession.builder.appName("CompareAndMergeCSVs").getOrCreate()
+
+    # Listing files in the source buckets
+    files_src1 = list_s3_files(src_bucket1)
+    files_src2 = list_s3_files(src_bucket2)
+
+    # Assuming the first file from each bucket is used for the operation
+    file_src1 = f's3://{src_bucket1}/{files_src1[0]}' if files_src1 else None
+    file_src2 = f's3://{src_bucket2}/{files_src2[0]}' if files_src2 else None
+
+    if not file_src1 or not file_src2:
+        print("Files not found in one or both of the buckets.")
+        return
+
+    # Read the first file without assuming a header
+    df_src1_raw = spark.read.option("inferSchema", "true").csv(file_src1)
+
+    # Check if the first row is a header
+    if is_header(df_src1_raw):
+        df_src1 = spark.read.option("inferSchema", "true").option("header", "true").csv(file_src1)
+    else:
+        df_src1 = df_src1_raw
+
+    # Read the second file assuming it has a header
+    df_src2 = spark.read.option("inferSchema", "true").option("header", "true").csv(file_src2)
+
+    # Merge both DataFrames, remove duplicates, and order by the first column
+    first_column_name = df_src2.columns[0]  # Get the name of the first column
+    df_merged = df_src2.unionByName(df_src1, allowMissingColumns=True).distinct().orderBy(first_column_name)
+
+    # Write the merged, deduplicated, and ordered DataFrame to the output path
+    df_merged.write.csv(output_path, mode="overwrite", header=True)
+
+    print(f"Merged, deduplicated, and ordered dataset written to {output_path}")
+
+if __name__ == "__main__":
+    output_path = 's3://espdstbkt/merged_output/'
+    src_bucket1 = 'espsrcbkt1'
+    src_bucket2 = 'espsrcbkt2'
+    merge_datasets(output_path, src_bucket1, src_bucket2)
+

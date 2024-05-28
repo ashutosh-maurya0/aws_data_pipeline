@@ -1,0 +1,42 @@
+import sys
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+
+## @params: [JOB_NAME]
+args = getResolvedOptions(sys.argv, ['JOB_NAME'])
+
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+
+# Extract the database and table names from the Glue job arguments
+database_name = "database"
+table_name = "table-name"
+
+# Read the data from the Glue Data Catalog table
+data_frame = glueContext.create_dynamic_frame.from_catalog(database=database_name, table_name=table_name).toDF()
+
+# Define the outlier threshold values
+lower_threshold = 0  # Define your lower threshold here
+upper_threshold = 100  # Define your upper threshold here
+
+# Apply outlier removal based on a specific column (replace 'value' with your column name)
+filtered_data_frame = data_frame.filter((col("ClosingPrice") >= lower_threshold) & (col("ClosingPrice") <= upper_threshold))
+
+# Specify the output S3 location for the filtered data as CSV
+output_bucket = "ouput-bucket"
+output_path = "out-put path"
+
+# Coalesce the DataFrame into a single partition
+filtered_data_frame = filtered_data_frame.coalesce(1)
+
+# Write the filtered data to another S3 location as a single CSV file
+filtered_data_frame.write.csv("s3://{}/{}".format(output_bucket, output_path), header=True, mode="overwrite")
+
+
+# Print a success message
+print("Outlier removal operation completed successfully")

@@ -1,0 +1,35 @@
+import sys
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import avg
+
+## @params: [JOB_NAME]
+args = getResolvedOptions(sys.argv, ['JOB_NAME'])
+
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+
+# Extract the database and table names from the Glue job arguments
+database_name = "databsee"
+table_name = "table-name"
+
+# Read the data from the Glue Data Catalog table
+data_frame = glueContext.create_dynamic_frame.from_catalog(database=database_name, table_name=table_name).toDF()
+
+# Calculate the average values for specified columns
+grouped_data = data_frame.groupBy("measurement title").agg({"*": "count"})
+
+# Specify the output S3 location for the final CSV
+output_bucket = "bucketname"
+output_path = "s3://buckenamet"
+
+# Write the average values data to another S3 location as CSV
+output_path_full = "s3://{}/{}".format(output_bucket, output_path)
+grouped_data.write.csv(output_path_full, mode='overwrite', header=True)
+
+# Print a success message
+print("Average calculation and saving operation completed successfully. Data saved to:", output_path_full)

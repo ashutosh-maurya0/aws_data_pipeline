@@ -1,0 +1,74 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import monotonically_increasing_id, col
+import boto3
+
+def list_s3_files(bucket_name, prefix=''):
+    """List all files in an S3 bucket."""
+    s3_client = boto3.client('s3')
+    response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+    files = [content['Key'] for content in response.get('Contents', []) if '.' in content['Key']]
+    return files
+
+def find_unique_column(df):
+    """Attempt to find a column with unique values in the DataFrame."""
+    total_rows = df.count()
+    for column in df.columns:
+        if df.select(column).distinct().count() == total_rows:
+            return column  # This column is identified as unique
+    return None  # No unique column found
+
+def merge_datasets(output_path, src_bucket1, src_bucket2):
+    spark = SparkSession.builder.appName("Data Merging and Cleaning").getOrCreate()
+    
+    # Dynamically get file names from the buckets
+    files_src_bucket1 = list_s3_files(src_bucket1)
+    files_src_bucket2 = list_s3_files(src_bucket2)
+    if not files_src_bucket1 or not files_src_bucket2:
+        raise ValueError("No files found in one of the buckets.")
+    
+    input_file_src_bucket1 = files_src_bucket1[0]
+    input_file_src_bucket2 = files_src_bucket2[0]
+    
+    # Read the CSV file with header from src_bucket2
+    df_header = spark.read.csv(f"s3://{src_bucket2}/{input_file_src_bucket2}", header=True)
+    
+    # Load the file from src_bucket1 using the schema from src_bucket2
+    df_no_header = spark.read.option("header", "false").schema(df_header.schema).csv(f"s3://{src_bucket1}/{input_file_src_bucket1}")
+    
+    # Merge datasets
+    merged_df = df_header.unionByName(df_no_header)
+    
+    # Add a temporary unique ID column for sorting
+    merged_df = merged_df.withColumn("temp_unique_id", monotonically_increasing_id())
+    
+    # Attempt to find a unique column for deduplication
+    unique_column = find_unique_column(merged_df.drop("temp_unique_id"))
+    if unique_column:
+        # Deduplicate based on the unique column
+        deduped_df = merged_df.dropDuplicates([unique_column])
+    else:
+        # If no unique column found, deduplicate based on all columns
+        deduped_df = merged_df.dropDuplicates()
+    
+    # Order by the temporary unique ID if unique column is not used for deduplication
+    if not unique_column:
+        ordered_df = deduped_df.orderBy("temp_unique_id")
+    else:
+        # If a unique column is found, order by it
+        ordered_df = deduped_df.orderBy(unique_column)
+    
+    # Remove the temporary unique ID column before writing the output
+    final_df = ordered_df.drop("temp_unique_id")
+    
+    # Write the result to the output S3 path with overwrite mode
+    final_df.coalesce(1).write.mode("overwrite").option("header", "true").csv(output_path)
+
+    spark.stop()
+
+if __name__ == "__main__":
+    output_path = 's3://espdstbkt/merged_output/'
+    src_bucket1 = 'espsrcbkt1'
+    src_bucket2 = 'espsrcbkt2'
+
+    merge_datasets(output_path, src_bucket1, src_bucket2)
+

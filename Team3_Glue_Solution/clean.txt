@@ -1,0 +1,29 @@
+import sys
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+
+# Initialize Spark and Glue contexts
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+
+# Read the CSV file into a DataFrame
+input_path = "s3://input-path"  # Update with your S3 bucket path
+df = spark.read.csv(input_path, header=True, inferSchema=True)
+
+# Drop rows with missing values
+cleaned_df = df.dropna()
+
+# Specify the output S3 location for the cleaned data
+output_bucket = "s3://output-path/"
+output_path = output_bucket + "cleaned_data/"
+
+# Write the cleaned DataFrame to S3 as CSV
+cleaned_df.write.csv(output_path, header=True)
+
+# Print a success message
+print("Data cleaning completed successfully")

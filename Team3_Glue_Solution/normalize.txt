@@ -1,0 +1,35 @@
+import sys
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, max as spark_max, min as spark_min
+
+# Initialize Spark session
+spark = SparkSession.builder \
+    .appName("Normalize Data and Save to S3") \
+    .getOrCreate()
+
+# Read data from S3
+
+input_path = "s3://inputpath/"
+data_frame = spark.read.csv(input_path, header=True, inferSchema=True)
+
+# Define columns to normalize
+columns_to_normalize = ['WaterTemperature', 'Turbidity', 'TransducerDepth', 'WaveHeight', 'WavePeriod', 'BatteryLife']
+
+# Normalize columns
+for column in columns_to_normalize:
+    max_val = data_frame.select(spark_max(col(column))).collect()[0][0]
+    min_val = data_frame.select(spark_min(col(column))).collect()[0][0]
+    data_frame = data_frame.withColumn(column, (col(column) - min_val) / (max_val - min_val))
+
+# Specify the output S3 location for the final CSV
+output_bucket = "output-path"
+output_path = "s3://{}/{}".format(output_bucket, "your_output_path")
+
+# Write the data to S3 as CSV
+data_frame.write.csv(output_path, header=True, mode="overwrite")
+
+# Stop Spark session
+spark.stop()
+
+# Print a success message
+print("Normalization and saving to S3 completed successfully")

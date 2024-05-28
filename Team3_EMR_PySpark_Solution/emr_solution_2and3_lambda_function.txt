@@ -1,0 +1,89 @@
+import boto3
+
+def lambda_handler(event, context):
+    # Extract bucket name and file key from the event
+    bucket_name = event['Records'][0]['s3']['bucket']['name']
+    file_key = event['Records'][0]['s3']['object']['key']
+   
+    print("bucket_name:", bucket_name)
+    print("file_key:", file_key)
+
+    # Define EMR client
+    emr_client = boto3.client('emr', region_name='eu-north-1')
+    s3_client = boto3.client('s3')
+    
+    response = s3_client.head_object(Bucket='espsrcbkt2', Key='emp.csv')
+    size = response['ContentLength']
+    
+    print("s3_client:", response)
+    print("size:",size)
+    
+    # Define your thresholds and instance counts here. Each tuple is (size_in_bytes, instance_count).
+    # The list should be ordered by size, ascending.
+    thresholds = [
+        (5 * 1024**3, 2),    # Tier 1: 5 GB or more
+        (10 * 1024**3, 4),   # Tier 2: 10 GB or more
+    ]
+    
+    # Get the size of the file in bytes (this should be obtained from the S3 head_object response)
+    size = response['ContentLength']
+    
+    # Calculate the number of instances needed
+    instance_count = 1  # Default to 1 instance if size is below all thresholds
+    for threshold, count in sorted(thresholds, reverse=True):
+        if size >= threshold:
+            instance_count = count
+            break
+    
+    print("Number of instances needed:", instance_count)
+     
+    # Configuration for the EMR cluster
+    cluster_id = emr_client.run_job_flow(
+        Name='Serverless EMR for ETL',
+        JobFlowRole="AmazonEMR-InstanceProfile-20240211T184401",
+        ServiceRole="EMR_DefaultRole",
+        VisibleToAllUsers=True,
+        LogUri='s3://aws-logs-876673246016-eu-north-1/elasticmapreduce',
+        ReleaseLabel='emr-6.0.0', # Choose an appropriate EMR release
+        Applications=[{'Name': 'Spark'}],
+        Instances={
+            'InstanceGroups': [
+                {
+                    'Name': "Master",
+                    'Market': 'ON_DEMAND',
+                    'InstanceRole': 'MASTER',
+                    'InstanceType': 'm5.xlarge',
+                    'InstanceCount': 1,
+                },
+                {
+                    'Name': "Core",
+                    'Market': 'ON_DEMAND',
+                    'InstanceRole': 'CORE',
+                    'InstanceType': 'm5.xlarge',
+                    'InstanceCount': instance_count,  # Use the determined instance count
+                }
+            ],
+            'Ec2KeyName': 'espkey',
+            'KeepJobFlowAliveWhenNoSteps': False,
+            'TerminationProtected': False,
+            'Ec2SubnetId': 'subnet-075d001b0c05c12d4',
+        },
+        Steps=[{
+            'Name': 'PySpark processing',
+            'ActionOnFailure': 'TERMINATE_CLUSTER',
+            'HadoopJarStep': {
+                'Jar': 'command-runner.jar',
+                'Args': [
+                    'spark-submit', 's3://epsbebkt/espbebkt.py',
+                    f's3://{bucket_name}/{file_key}',
+                    's3://espsrcbkt2/emp.csv', 
+                    's3://espdstbkt/output.csv'
+                ],
+            },
+        }],
+    )
+
+    return {
+        'statusCode': 200,
+        'body': f"Triggered EMR Cluster with ID: {cluster_id['JobFlowId']}"
+    }

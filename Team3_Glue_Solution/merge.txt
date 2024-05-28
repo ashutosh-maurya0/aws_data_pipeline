@@ -1,0 +1,28 @@
+import sys
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from pyspark.sql import SparkSession
+
+# Initialize Spark and Glue contexts
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+
+# Read the Employee and Department datasets into DataFrames
+employee_df = glueContext.create_dynamic_frame.from_catalog(database="databsae", table_name="employee_data_csv").toDF()
+department_df = glueContext.create_dynamic_frame.from_catalog(database="database", table_name="department_data_csv").toDF()
+
+# Perform inner join on DepartmentID column
+joined_df = employee_df.join(department_df, "DepartmentID", "inner")
+
+# Specify the output S3 location for the joined data
+output_bucket = "s3://output-bucket/"
+output_path = output_bucket + "joined_data/"
+
+# Write the joined DataFrame to S3 as CSV
+joined_df.write.csv(output_path, header=True)
+
+# Print a success message
+print("Data join operation completed successfully")
